@@ -1,0 +1,28 @@
+/* index.css */
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background-color: #ffffff;
+  color: #333333;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden; /* 불필요한 스크롤바 제거 */
+}
+
+#root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: center; /* 중앙 정렬 */
+}
+
+/* 달력 아이콘(화살표) 깨짐 방지 */
+.fc-icon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  vertical-align: middle;
+  text-align: center;
+  overflow: hidden;
+}
