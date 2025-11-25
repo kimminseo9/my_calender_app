@@ -4,6 +4,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import chokidar from 'chokidar' // 감시 카메라
 import fs from 'fs' // 파일 시스템 도구
+import mammoth from 'mammoth';
 
 // 1. 감시할 폴더 경로 설정 (바탕화면의 my-docs 폴더)
 const watchPath = join(app.getPath('desktop'), 'my-docs')
@@ -64,6 +65,65 @@ function createWindow() {
   ipcMain.handle('open-file', async (event, path) => {
     console.log(`📂 파일 열기 시도: ${path}`);
     await shell.openPath(path); 
+  });
+
+  ipcMain.handle('summarize-file', async (event, filePath) => {
+    try {
+      console.log(`📝 정밀 요약 시도: ${filePath}`);
+      
+      const ext = filePath.split('.').pop().toLowerCase();
+      let rawText = "";
+
+      // 1. 파일 읽기
+      if (ext === 'docx') {
+        const result = await mammoth.extractRawText({ path: filePath });
+        rawText = result.value;
+      } else if (ext === 'txt' || ext === 'md') {
+        rawText = fs.readFileSync(filePath, 'utf-8');
+      } else {
+        return "미리보기를 지원하지 않는 파일입니다.";
+      }
+
+      // 2. 텍스트 전처리 (공백 정리)
+      const cleanText = rawText.replace(/\s+/g, ' ').trim();
+      if (cleanText.length < 200) return cleanText; // 너무 짧으면 그냥 다 보여줌
+
+      // 3. [알고리즘] 간단한 핵심 문장 추출기
+      // 문장 단위로 쪼개기
+      const sentences = cleanText.split(/[.?!]\s+/);
+      
+      // 단어 빈도수 계산 (자주 나오는 단어가 핵심 키워드일 확률이 높음)
+      const wordCount = {};
+      const words = cleanText.split(/\s+/);
+      words.forEach(word => {
+        if (word.length > 1) { // 한 글자 단어는 무시
+          wordCount[word] = (wordCount[word] || 0) + 1;
+        }
+      });
+
+      // 문장 점수 매기기 (핵심 단어가 많이 포함된 문장이 높은 점수)
+      const scoredSentences = sentences.map(sentence => {
+        let score = 0;
+        const sentenceWords = sentence.split(/\s+/);
+        sentenceWords.forEach(word => {
+          if (wordCount[word]) score += wordCount[word];
+        });
+        return { text: sentence, score: score };
+      });
+
+      // 점수 높은 순으로 정렬해서 상위 3개 문장만 뽑기
+      scoredSentences.sort((a, b) => b.score - a.score);
+      const topSentences = scoredSentences.slice(0, 3).map(s => s.text);
+
+      // 문장 합치기
+      const summary = topSentences.join('. ') + ".";
+      
+      return "💡 자동 요약: " + summary;
+
+    } catch (error) {
+      console.error(error);
+      return "내용을 읽을 수 없습니다.";
+    }
   });
 
 }

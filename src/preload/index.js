@@ -6,7 +6,8 @@ const api = {
   onFileAdded: (callback) => ipcRenderer.on('file-added', (_event, value) => callback(value)),
   
   // 2. 파일을 열어달라고 요청하는 함수
-  openFile: (path) => ipcRenderer.invoke('open-file', path)
+  openFile: (path) => ipcRenderer.invoke('open-file', path),
+  getSummary: (path) => ipcRenderer.invoke('summarize-file', path)
 }
 
 // 세상 밖으로 기능 노출 (React가 window.api 로 쓸 수 있게 함)
