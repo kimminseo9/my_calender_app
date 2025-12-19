@@ -12,6 +12,15 @@ const MacFolderIcon = () => (
   </svg>
 );
 
+// 🏷️ [디자인] 북마크 아이콘
+const BookmarkListIcon = () => (
+  <svg viewBox="0 0 100 100" width="100%" height="100%" style={{ display: 'block' }}>
+    <path d="M20,10 L80,10 C85.5,10 90,14.5 90,20 L90,90 L50,70 L10,90 L10,20 C10,14.5 14.5,10 20,10 Z" fill="#FFC107" />
+    <path d="M20,10 L80,10 C85.5,10 90,14.5 90,20 L90,35 L10,35 L10,20 C10,14.5 14.5,10 20,10 Z" fill="#FFD54F" />
+    <circle cx="50" cy="25" r="5" fill="#B71C1C" />
+  </svg>
+);
+
 // 📄 [디자인] 파일 아이콘
 const FileIcon = () => (
   <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#555" strokeWidth="2">
@@ -48,12 +57,17 @@ function App() {
   const [currentMyDocsFolder, setCurrentMyDocsFolder] = useState(null);
   const [currentAddedFolder, setCurrentAddedFolder] = useState(null);
   const [currentNotAddedFolder, setCurrentNotAddedFolder] = useState(null);
+  const [currentBookmarkFolder, setCurrentBookmarkFolder] = useState(null);
 
   const [addedSortOrder, setAddedSortOrder] = useState('name');
-  // 🔴 [복구] 보기 모드 상태
-  const [addedViewMode, setAddedViewMode] = useState('folder'); // 'folder' | 'all'
+  const [addedViewMode, setAddedViewMode] = useState('folder');
 
   const [isMyDocsOpen, setIsMyDocsOpen] = useState(false);
+  const [bookmarkSummaries, setBookmarkSummaries] = useState({});
+
+  const [isDateChangeModalOpen, setIsDateChangeModalOpen] = useState(false);
+  const [targetFileForDateChange, setTargetFileForDateChange] = useState(null); 
+  const [newDateInput, setNewDateInput] = useState('');
 
   const draggableRef = useRef(null); 
   const myDocsDraggableRef = useRef(null); 
@@ -72,6 +86,18 @@ function App() {
       });
     }
   }, [viewMode, openedFolder]);
+
+  useEffect(() => {
+    if (viewMode === 'folder' && openedFolder && openedFolder.date) {
+        const currentEvent = events.find(e => e.title === openedFolder.title && e.date === openedFolder.date);
+        if (currentEvent) {
+            setOpenedFolder(prev => ({ ...prev, files: currentEvent.extendedProps.files }));
+        } else {
+            setViewMode('calendar');
+            setOpenedFolder(null);
+        }
+    }
+  }, [events]);
 
   useEffect(() => {
     console.log("🚀 앱 시작");
@@ -134,7 +160,7 @@ function App() {
       }
 
     return () => {};
-  }, [viewMode, sidebarTab, files, events, currentMyDocsFolder, currentAddedFolder, currentNotAddedFolder, addedSortOrder, addedViewMode, isMyDocsOpen]);
+  }, [viewMode, sidebarTab, files, events, currentMyDocsFolder, currentAddedFolder, currentNotAddedFolder, currentBookmarkFolder, addedSortOrder, addedViewMode, isMyDocsOpen]);
 
   const handleMemoChange = (filePath, text) => {
     const newMemos = { ...memos, [filePath]: text };
@@ -151,11 +177,9 @@ function App() {
   const handleAddBookmark = (filePath) => {
     if (!inputUrl) return alert("URL을 입력해주세요!");
     if (!inputTitle) return alert("제목을 입력해주세요!");
-    
     const newBookmark = { title: inputTitle, url: inputUrl, desc: inputDesc };
     const currentList = bookmarks[filePath] || [];
     const newList = [...currentList, newBookmark];
-
     const newBookmarksMap = { ...bookmarks, [filePath]: newList };
     setBookmarks(newBookmarksMap);
     localStorage.setItem('fileBookmarks', JSON.stringify(newBookmarksMap));
@@ -175,6 +199,13 @@ function App() {
     window.open(target, '_blank');
   };
 
+  const handleSummarizeUrl = async (url) => {
+    if (bookmarkSummaries[url]) return; 
+    setBookmarkSummaries(prev => ({ ...prev, [url]: "⏳ AI가 사이트를 분석 중입니다..." }));
+    const result = await window.api.getUrlSummary(url);
+    setBookmarkSummaries(prev => ({ ...prev, [url]: result }));
+  };
+
   const handleDateClick = (arg) => {
     if (calendarRef.current) {
       calendarRef.current.getApi().changeView('dayGridDay', arg.dateStr);
@@ -184,7 +215,8 @@ function App() {
   const handleEventClick = (clickInfo) => {
     const folderFiles = clickInfo.event.extendedProps.files || [];
     const folderName = clickInfo.event.title;
-    setOpenedFolder({ title: folderName, files: folderFiles });
+    const date = clickInfo.event.startStr;
+    setOpenedFolder({ title: folderName, files: folderFiles, date: date });
     setViewMode('folder');
   };
 
@@ -195,9 +227,7 @@ function App() {
     const safeFolder = folder || info.draggedEl.dataset.folder;
     const safeFileName = fileName || info.draggedEl.dataset.filename;
     const dropDate = info.event.startStr;
-
     if (!safePath) return;
-
     setTempDropInfo({ path: safePath, folder: safeFolder, fileName: safeFileName, date: dropDate });
     setModalInput(''); 
     setIsModalOpen(true);
@@ -209,11 +239,9 @@ function App() {
         setIsModalOpen(false);
         return;
     }
-
     const targetFolderName = modalInput.trim();
     const { path, fileName, folder, date } = tempDropInfo;
     const newFile = { path, fileName, folder }; 
-
     setEvents(prevEvents => {
       const existingIndex = prevEvents.findIndex(evt => evt.date === date && evt.title === targetFolderName);
       if (existingIndex !== -1) {
@@ -238,7 +266,6 @@ function App() {
         }];
       }
     });
-
     setFiles(prev => prev.filter(f => f.path !== path));
     setIsModalOpen(false);
     setTempDropInfo(null);
@@ -260,6 +287,81 @@ function App() {
     e.stopPropagation();
     setBookmarkOpenState(prev => ({ ...prev, [filePath]: !prev[filePath] }));
     setActiveFileForBookmark(filePath); 
+  };
+
+  const handleDeleteAddedFile = (file, eventDate, folderName) => {
+    if(!confirm(`'${file.title || file.fileName}' 파일을 캘린더에서 제거하시겠습니까?`)) return;
+    setEvents(prevEvents => {
+        return prevEvents.map(evt => {
+            if (evt.date === eventDate && evt.title === folderName) {
+                const newFiles = evt.extendedProps.files.filter(f => f.path !== file.path);
+                if (newFiles.length === 0) return null;
+                return { ...evt, extendedProps: { ...evt.extendedProps, files: newFiles } };
+            }
+            return evt;
+        }).filter(Boolean); 
+    });
+    setFiles(prev => {
+        if(prev.some(f => f.path === file.path)) return prev;
+        const parts = file.path.split(/[/\\]/);
+        const originalFileName = parts.pop();
+        const parentFolder = parts.pop();
+        const originalFolder = (parentFolder === 'my-docs') ? '기타 파일' : parentFolder;
+        return [...prev, { 
+            id: file.path,
+            path: file.path, 
+            title: originalFileName, 
+            fileName: originalFileName, 
+            folder: originalFolder
+        }];
+    });
+  };
+
+  const openDateChangeModal = (file, eventDate, folderName) => {
+    setTargetFileForDateChange({ file, oldDate: eventDate, folderName });
+    setNewDateInput(eventDate); 
+    setIsDateChangeModalOpen(true);
+  };
+
+  const confirmDateChange = () => {
+    if (!newDateInput) return alert("날짜를 선택해주세요.");
+    const { file, oldDate, folderName } = targetFileForDateChange;
+    if (newDateInput === oldDate) {
+        setIsDateChangeModalOpen(false);
+        return;
+    }
+    setEvents(prevEvents => {
+        let newEvents = prevEvents.map(evt => {
+            if (evt.date === oldDate && evt.title === folderName) {
+                const newFiles = evt.extendedProps.files.filter(f => f.path !== file.path);
+                if (newFiles.length === 0) return null; 
+                return { ...evt, extendedProps: { ...evt.extendedProps, files: newFiles } };
+            }
+            return evt;
+        }).filter(Boolean);
+        const targetIndex = newEvents.findIndex(evt => evt.date === newDateInput && evt.title === folderName);
+        if (targetIndex !== -1) {
+            const targetEvt = newEvents[targetIndex];
+            if(!targetEvt.extendedProps.files.some(f => f.path === file.path)){
+                newEvents[targetIndex] = {
+                    ...targetEvt,
+                    extendedProps: { ...targetEvt.extendedProps, files: [...targetEvt.extendedProps.files, file] }
+                };
+            }
+        } else {
+            newEvents.push({
+                id: Date.now().toString() + Math.random(),
+                title: folderName,
+                date: newDateInput,
+                extendedProps: { files: [file] },
+                backgroundColor: 'transparent',
+                borderColor: 'transparent'
+            });
+        }
+        return newEvents;
+    });
+    setIsDateChangeModalOpen(false);
+    setTargetFileForDateChange(null);
   };
 
   const getAllFiles = () => {
@@ -317,10 +419,8 @@ function App() {
 
   const sidebarData = getSidebarContent();
 
-  // [전체 파일(내 문서함) 렌더링 - 우측 서랍]
   const renderMyDocsTab = () => {
     const allFiles = getAllFiles();
-
     if (currentMyDocsFolder === null) {
         const folderNames = [...new Set(allFiles.map(f => f.folder))].sort();
         return (
@@ -385,9 +485,7 @@ function App() {
     }
   };
 
-  // [메인 사이드바 렌더링]
   const renderSidebarList = () => {
-    
     // A. 미분류 (not_added)
     if (sidebarTab === 'not_added') {
       if (currentNotAddedFolder === null) {
@@ -395,7 +493,6 @@ function App() {
             return <p style={{color:'#999', fontSize:'12px', textAlign:'center', marginTop:'30px'}}>파일이 없습니다.</p>;
           }
           const folderNames = [...new Set(sidebarData.map(f => f.folder))].sort();
-          
           return (
             <div>
                  <div style={{fontSize:'12px', color:'#999', marginBottom:'10px', textAlign:'center'}}>폴더를 선택하여 파일을 확인하세요.</div>
@@ -437,10 +534,12 @@ function App() {
                         data-filename={file.title || file.fileName}
                         style={{ margin: '8px 0', padding: '10px', backgroundColor: 'white', border: '1px solid #e0e0e0', cursor: 'grab', borderRadius: '6px', display:'flex', alignItems:'center' }}
                     >
-                         <div style={{pointerEvents: 'none', display:'flex', alignItems:'center', width:'100%'}}>
-                            <div style={{width:'24px', height:'24px', marginRight:'8px', flexShrink:0}}><FileIcon /></div>
-                            <div style={{overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
-                                <span style={{fontSize:'13px'}}>{file.title}</span>
+                         <div style={{pointerEvents: 'none', display:'flex', alignItems:'center', width:'100%', justifyContent:'space-between'}}>
+                            <div style={{display:'flex', alignItems:'center', overflow:'hidden'}}>
+                                <div style={{width:'24px', height:'24px', marginRight:'8px', flexShrink:0}}><FileIcon /></div>
+                                <div style={{overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'}}>
+                                    <span style={{fontSize:'13px'}}>{file.title}</span>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -451,9 +550,8 @@ function App() {
       }
     }
 
-    // 🔴 [복구됨] B. 과목별 (added) - 두 가지 모드(폴더/전체) 지원
+    // B. 과목별 (added)
     if (sidebarTab === 'added') {
-        // 토글 버튼 UI
         const toggleHeader = (
             <div style={{ display: 'flex', gap: '10px', marginBottom: '15px' }}>
                 <button onClick={() => setAddedViewMode('folder')} style={{ flex: 1, padding: '6px', borderRadius: '6px', border: addedViewMode === 'folder' ? '1px solid #007bff' : '1px solid #ddd', backgroundColor: addedViewMode === 'folder' ? '#e7f1ff' : 'white', color: addedViewMode === 'folder' ? '#007bff' : '#555', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}>📁 과목별 보기</button>
@@ -461,7 +559,6 @@ function App() {
             </div>
         );
 
-        // 1) 폴더별 보기 (기존 로직)
         if (addedViewMode === 'folder') {
             const keys = Object.keys(sidebarData);
             
@@ -502,9 +599,15 @@ function App() {
                         {filesInSubject.map((file, fIdx) => (
                             <div key={fIdx} className="draggable-item" data-path={file.path} data-folder={file.folder} data-filename={file.title || file.fileName} style={{ margin: '8px 0', padding: '10px', backgroundColor: 'white', border: '1px solid #e0e0e0', cursor: 'grab', borderRadius: '6px', display:'flex', alignItems:'center', fontSize: '13px' }}>
                                 <div style={{display:'flex', flexDirection:'column', width:'100%'}}>
-                                    <div style={{display:'flex', alignItems:'center'}}>
-                                        <div style={{flexShrink:0, marginRight:'8px'}}><FileIcon /></div>
-                                        <span style={{ color: '#333', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{file.title || file.fileName}</span>
+                                    <div style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+                                        <div style={{display:'flex', alignItems:'center', overflow:'hidden'}}>
+                                            <div style={{flexShrink:0, marginRight:'8px'}}><FileIcon /></div>
+                                            <span style={{ color: '#333', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{file.title || file.fileName}</span>
+                                        </div>
+                                        <div style={{display:'flex', gap:'5px', marginLeft:'5px'}}>
+                                            <button onClick={(e) => { e.stopPropagation(); openDateChangeModal(file, file.date, currentAddedFolder); }} title="날짜 변경" style={{border:'none', background:'none', cursor:'pointer', fontSize:'14px'}}>✏️</button>
+                                            <button onClick={(e) => { e.stopPropagation(); handleDeleteAddedFile(file, file.date, currentAddedFolder); }} title="목록에서 제거" style={{border:'none', background:'none', cursor:'pointer', fontSize:'14px'}}>🗑️</button>
+                                        </div>
                                     </div>
                                     {file.date && <div style={{fontSize:'11px', color:'#e67e22', marginTop:'4px', marginLeft:'32px'}}>📅 {file.date} 마감</div>}
                                 </div>
@@ -514,7 +617,6 @@ function App() {
                 );
             }
         }
-        // 2) 전체 파일 보기 (마감임박순 강제 정렬)
         else {
             let allAddedFiles = [];
             Object.keys(sidebarData).forEach(key => { allAddedFiles = [...allAddedFiles, ...sidebarData[key]]; });
@@ -527,12 +629,127 @@ function App() {
                     {allAddedFiles.map((file, fIdx) => (
                         <div key={fIdx} className="draggable-item" data-path={file.path} data-folder={file.folder} data-filename={file.title || file.fileName} style={{ margin: '8px 0', padding: '10px', backgroundColor: 'white', border: '1px solid #e0e0e0', cursor: 'grab', borderRadius: '6px', display:'flex', alignItems:'center', fontSize: '13px' }}>
                             <div style={{display:'flex', flexDirection:'column', width:'100%'}}>
-                                <div style={{display:'flex', alignItems:'center'}}>
-                                    <span style={{fontWeight:'bold', color:'#007bff', fontSize:'11px', marginRight:'6px', whiteSpace: 'nowrap'}}>[{file.folder}]</span>
-                                    <div style={{flexShrink:0, marginRight:'4px'}}><FileIcon /></div>
-                                    <span style={{ color: '#333', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{file.title || file.fileName}</span>
+                                <div style={{display:'flex', alignItems:'center', justifyContent:'space-between'}}>
+                                    <div style={{display:'flex', alignItems:'center', overflow:'hidden'}}>
+                                        <span style={{fontWeight:'bold', color:'#007bff', fontSize:'11px', marginRight:'6px', whiteSpace: 'nowrap'}}>[{file.folder}]</span>
+                                        <div style={{flexShrink:0, marginRight:'4px'}}><FileIcon /></div>
+                                        <span style={{ color: '#333', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{file.title || file.fileName}</span>
+                                    </div>
+                                    <div style={{display:'flex', gap:'5px', marginLeft:'5px'}}>
+                                        <button onClick={(e) => { e.stopPropagation(); openDateChangeModal(file, file.date, file.folder); }} title="날짜 변경" style={{border:'none', background:'none', cursor:'pointer', fontSize:'14px'}}>✏️</button>
+                                        <button onClick={(e) => { e.stopPropagation(); handleDeleteAddedFile(file, file.date, file.folder); }} title="목록에서 제거" style={{border:'none', background:'none', cursor:'pointer', fontSize:'14px'}}>🗑️</button>
+                                    </div>
                                 </div>
                                 {file.date && <div style={{fontSize:'11px', color:'#e67e22', marginTop:'4px', marginLeft:'4px'}}>📅 {file.date} 마감</div>}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            );
+        }
+    }
+
+    // C. 북마크 (bookmarks)
+    if (sidebarTab === 'bookmarks') {
+        const bookmarkFiles = [];
+        const pathFolderMap = {};
+        files.forEach(f => { pathFolderMap[f.path] = f.folder; });
+        events.forEach(evt => {
+            if (evt.extendedProps.files) {
+                evt.extendedProps.files.forEach(f => {
+                    pathFolderMap[f.path] = evt.title; 
+                });
+            }
+        });
+
+        Object.keys(bookmarks).forEach(path => {
+            if (bookmarks[path] && bookmarks[path].length > 0) {
+                const folderName = pathFolderMap[path] || '미분류';
+                const fileName = path.split(/[/\\]/).pop();
+                bookmarkFiles.push({
+                    path,
+                    fileName,
+                    folder: folderName,
+                    bookmarks: bookmarks[path]
+                });
+            }
+        });
+
+        if (bookmarkFiles.length === 0) {
+            return (
+                <div style={{textAlign:'center', marginTop:'50px', color:'#999'}}>
+                    <p style={{fontSize:'40px', margin:'0 0 10px 0'}}>⭐</p>
+                    <p style={{fontSize:'14px'}}>저장된 북마크가 없습니다.</p>
+                </div>
+            );
+        }
+
+        if (currentBookmarkFolder === null) {
+            const folderNames = [...new Set(bookmarkFiles.map(f => f.folder))].sort();
+            
+            return (
+                <div>
+                    <div style={{fontSize:'12px', color:'#999', marginBottom:'10px', textAlign:'center'}}>북마크가 저장된 폴더를 선택하세요.</div>
+                    {folderNames.map((folderName, idx) => {
+                        const count = bookmarkFiles.filter(f => f.folder === folderName).length;
+                        return (
+                            <div 
+                                key={idx}
+                                onClick={() => setCurrentBookmarkFolder(folderName)}
+                                style={{ display: 'flex', alignItems: 'center', padding: '12px', borderBottom: '1px solid #f0f0f0', cursor: 'pointer', backgroundColor: 'white', borderRadius: '8px', marginBottom: '8px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}
+                                onMouseOver={(e) => e.currentTarget.style.backgroundColor = '#f9f9f9'}
+                                onMouseOut={(e) => e.currentTarget.style.backgroundColor = 'white'}
+                            >
+                                <div style={{ width: '24px', height: '24px', marginRight: '10px' }}><BookmarkListIcon /></div>
+                                <span style={{ fontSize: '14px', fontWeight: 'bold', color: '#333' }}>{folderName}</span>
+                                <span style={{ fontSize: '12px', color: '#aaa', marginLeft: 'auto' }}>
+                                    {count}개 파일
+                                </span>
+                            </div>
+                        );
+                    })}
+                </div>
+            );
+        }
+        else {
+            const filesInFolder = bookmarkFiles.filter(f => f.folder === currentBookmarkFolder);
+            
+            return (
+                <div>
+                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: '15px', paddingBottom:'10px', borderBottom:'1px solid #eee' }}>
+                        <button onClick={() => setCurrentBookmarkFolder(null)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: '14px', fontWeight: 'bold', color: '#007bff', display:'flex', alignItems:'center' }}>
+                            ⬅ 뒤로가기
+                        </button>
+                        <span style={{ marginLeft: '10px', color: '#ddd' }}>|</span>
+                        <span style={{ marginLeft: '10px', fontSize: '14px', fontWeight: 'bold', color: '#333' }}>⭐ {currentBookmarkFolder}</span>
+                    </div>
+
+                    {filesInFolder.map((file, idx) => (
+                        <div key={idx} style={{backgroundColor:'white', borderRadius:'8px', border:'1px solid #eee', marginBottom:'15px', padding:'10px', boxShadow:'0 2px 5px rgba(0,0,0,0.03)'}}>
+                            <div style={{display:'flex', alignItems:'center', marginBottom:'8px', paddingBottom:'8px', borderBottom:'1px dashed #eee'}}>
+                                <div style={{width:'16px', height:'16px', marginRight:'6px'}}><FileIcon /></div>
+                                <span style={{fontSize:'13px', fontWeight:'bold', color:'#333', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}}>{file.fileName}</span>
+                            </div>
+                            
+                            <div style={{display:'flex', flexDirection:'column', gap:'8px'}}>
+                                {file.bookmarks.map((bm, bIdx) => (
+                                    <div key={bIdx} style={{padding:'8px', backgroundColor:'#f8f9fa', borderRadius:'6px', border:'1px solid #f0f0f0', transition:'0.2s'}}>
+                                        <div style={{display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+                                            <div style={{display:'flex', alignItems:'center', cursor:'pointer', flex:1}} onClick={() => openLink(bm.url)}>
+                                                <span style={{marginRight:'5px'}}>🔗</span>
+                                                <span style={{fontSize:'13px', fontWeight:'bold', color:'#0056b3'}}>{bm.title}</span>
+                                            </div>
+                                            <button onClick={(e) => { e.stopPropagation(); handleSummarizeUrl(bm.url); }} style={{border:'none', background:'#eef5ff', color:'#007bff', fontSize:'11px', cursor:'pointer', padding:'2px 6px', borderRadius:'4px', marginLeft:'5px'}}>
+                                                {bookmarkSummaries[bm.url] ? '갱신' : '요약'}
+                                            </button>
+                                        </div>
+                                        <div onClick={() => openLink(bm.url)} style={{cursor:'pointer', paddingLeft:'20px'}}>
+                                            <div style={{fontSize:'11px', color:'#888', whiteSpace:'nowrap', overflow:'hidden', textOverflow:'ellipsis'}}>{bm.url}</div>
+                                            {bm.desc && <div style={{marginTop:'4px', padding:'6px 8px', backgroundColor:'#eee', borderRadius:'4px', fontSize:'11px', color:'#555', display:'flex', alignItems:'flex-start'}}><span style={{marginRight:'4px'}}>📝</span><span>{bm.desc}</span></div>}
+                                        </div>
+                                        {bookmarkSummaries[bm.url] && <div style={{marginTop:'8px', padding:'8px', backgroundColor:'#e8f5e9', border:'1px solid #c8e6c9', borderRadius:'4px', fontSize:'11px', color:'#2e7d32'}}><div style={{fontWeight:'bold', marginBottom:'4px'}}>🤖 AI 자동 요약</div><div style={{whiteSpace:'pre-wrap', lineHeight:'1.4'}}>{bookmarkSummaries[bm.url]}</div></div>}
+                                    </div>
+                                ))}
                             </div>
                         </div>
                     ))}
@@ -545,7 +762,22 @@ function App() {
   return (
     <div style={{ display: 'flex', height: '100vh', width: '100%', overflow: 'hidden', position: 'relative' }}>
       
-      {/* 모달 */}
+      {/* 날짜 변경 모달 */}
+      {isDateChangeModalOpen && (
+        <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1100, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+          <div style={{ backgroundColor: 'white', padding: '20px', borderRadius: '12px', width: '280px', display: 'flex', flexDirection: 'column', gap: '15px', boxShadow: '0 4px 15px rgba(0,0,0,0.2)' }}>
+            <h4 style={{margin:0, textAlign:'center'}}>📅 날짜 변경</h4>
+            <p style={{margin:0, fontSize:'13px', color:'#666', textAlign:'center'}}>{targetFileForDateChange?.file?.title || targetFileForDateChange?.file?.fileName}</p>
+            <input type="date" value={newDateInput} onChange={(e) => setNewDateInput(e.target.value)} style={{padding:'8px', borderRadius:'6px', border:'1px solid #ddd', width:'100%', boxSizing:'border-box'}} />
+            <div style={{display:'flex', gap:'10px'}}>
+                <button onClick={() => setIsDateChangeModalOpen(false)} style={{flex:1, padding:'8px', borderRadius:'6px', border:'1px solid #ddd', background:'white', cursor:'pointer'}}>취소</button>
+                <button onClick={confirmDateChange} style={{flex:1, padding:'8px', borderRadius:'6px', border:'none', background:'#007bff', color:'white', fontWeight:'bold', cursor:'pointer'}}>변경</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 기존 모달 (폴더 이름 입력) */}
       {isModalOpen && (
         <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', backgroundColor: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
           <div style={{ backgroundColor: 'white', padding: '20px 30px', borderRadius: '12px', boxShadow: '0 4px 15px rgba(0,0,0,0.2)', width: '300px', display: 'flex', flexDirection: 'column', gap: '15px' }}>
@@ -562,12 +794,13 @@ function App() {
 
       {/* 왼쪽 메인 화면 */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', position: 'relative', overflow: 'hidden' }}>
-        {viewMode === 'calendar' && (
-          <div style={{ padding: '20px', display: 'flex', flexDirection: 'column', height: '100%' }}>
-            <div style={{display: 'flex', justifyContent: 'space-between', marginBottom: '15px'}}>
+        
+        {/* 🔴 [수정됨] 캘린더 영역: display: none으로 상태 유지 */}
+        <div style={{ display: viewMode === 'calendar' ? 'flex' : 'none', flexDirection: 'column', height: '100%', padding: '20px' }}>
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:'15px'}}>
               <h2 style={{margin: 0}}>📅 나의 스케줄</h2>
-              <button onClick={() => calendarRef.current.getApi().changeView('dayGridMonth')} style={{padding: '8px 12px', cursor: 'pointer', background:'#333', color:'white', border:'none', borderRadius:'6px'}}>전체 보기 (Month)</button>
             </div>
+            
             <div style={{ flex: 1, backgroundColor: 'white', borderRadius: '12px', padding: '10px', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
               <FullCalendar
                 ref={calendarRef}
@@ -581,15 +814,26 @@ function App() {
                 eventClick={handleEventClick}
                 eventReceive={handleReceive}
                 eventContent={renderEventContent}
-                headerToolbar={{ left: 'prev,next today', center: 'title', right: '' }}
+                
+                // 🔴 [수정됨] 헤더 툴바 설정 변경
+                headerToolbar={{ left: 'myMonthBtn', center: 'title', right: 'prev,next today' }}
+                customButtons={{
+                  myMonthBtn: {
+                    text: '전체 보기 (Month)',
+                    click: () => {
+                      const calendarApi = calendarRef.current.getApi();
+                      calendarApi.changeView('dayGridMonth');
+                    }
+                  }
+                }}
                 dayMaxEventRows={true}
               />
             </div>
-          </div>
-        )}
+        </div>
 
+        {/* 🔴 [수정됨] 폴더 뷰 (Overlay 방식) */}
         {viewMode === 'folder' && openedFolder && (
-          <div style={{ width: '100%', height: '100%', backgroundColor: '#f5f5f7', display: 'flex', flexDirection: 'column' }}>
+          <div style={{ width: '100%', height: '100%', backgroundColor: '#f5f5f7', display: 'flex', flexDirection: 'column', position: 'absolute', top: 0, left: 0, zIndex: 10 }}>
             <div style={{ padding: '20px 30px', backgroundColor: 'white', borderBottom: '1px solid #ddd', display: 'flex', alignItems: 'center', boxShadow: '0 2px 5px rgba(0,0,0,0.03)' }}>
               <button onClick={() => setViewMode('calendar')} style={{ marginRight: '20px', padding: '8px 16px', fontSize: '14px', borderRadius: '6px', border: '1px solid #ccc', backgroundColor: '#fff', cursor: 'pointer' }}>← 뒤로가기</button>
               <div style={{ width: '32px', height: '32px', marginRight: '10px' }}><MacFolderIcon /></div>
@@ -608,11 +852,32 @@ function App() {
                       <div style={{ display: 'flex', alignItems: 'center', width: '100%', marginBottom: '6px' }}>
                         <FileIcon />
                         <span style={{ marginLeft: '12px', fontSize: '16px', fontWeight: 'bold', color: '#333', flex: 1 }}>{file.fileName}</span>
-                        <div style={{ width: '300px', display: 'flex', alignItems: 'center', marginLeft:'20px' }}>
+                        
+                        {/* 🔴 캘린더 폴더 뷰 내부 수정/삭제 버튼 */}
+                        <div style={{display:'flex', gap:'8px', marginRight:'20px'}}>
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); openDateChangeModal(file, openedFolder.date, openedFolder.title); }} 
+                                title="날짜 변경" 
+                                style={{border:'none', background:'#eef5ff', color:'#007bff', cursor:'pointer', padding:'6px 10px', borderRadius:'6px', fontSize:'12px', fontWeight:'bold'}}
+                            >
+                                📅 날짜변경
+                            </button>
+                            <button 
+                                onClick={(e) => { e.stopPropagation(); handleDeleteAddedFile(file, openedFolder.date, openedFolder.title); }} 
+                                title="캘린더에서 제거" 
+                                style={{border:'none', background:'#fff1f0', color:'#ff4d4f', cursor:'pointer', padding:'6px 10px', borderRadius:'6px', fontSize:'12px', fontWeight:'bold'}}
+                            >
+                                🗑️ 제거
+                            </button>
+                        </div>
+
+                        <div style={{ width: '250px', display: 'flex', alignItems: 'center' }}>
                           <span style={{ fontSize: '12px', color: '#999', marginRight: '8px' }}>📝 Memo:</span>
                           <input type="text" placeholder="나만의 메모..." value={memos[file.path] || ''} onClick={(e) => e.stopPropagation()} onChange={(e) => handleMemoChange(file.path, e.target.value)} style={{ flex: 1, padding: '8px', borderRadius: '6px', border: '1px solid #ddd', fontSize: '13px', backgroundColor: '#fff8dc' }} />
                         </div>
                       </div>
+                      
+                      {/* ... (진행률, 요약/북마크 버튼) ... */}
                       <div style={{ paddingLeft: '38px', marginBottom: '10px', display:'flex', alignItems:'center' }} onClick={(e) => e.stopPropagation()}>
                         <span style={{fontSize:'12px', color:'#666', marginRight:'10px', width:'40px'}}>진행률</span>
                         <input type="range" min="0" max="100" value={currentProgress} onChange={(e) => handleProgressChange(file.path, e.target.value)} style={{ flex: 1, cursor: 'pointer', height: '6px', borderRadius: '3px', appearance: 'none', background: `linear-gradient(to right, #007bff ${currentProgress}%, #e9ecef ${currentProgress}%)` }} />
@@ -626,7 +891,7 @@ function App() {
                       {isBookmarkOpen && (
                         <div style={{ marginLeft: '38px', marginRight: '20px', padding: '15px', backgroundColor: '#eef5ff', borderRadius: '6px', fontSize: '13px', color: '#333', lineHeight: '1.6', borderLeft: '4px solid #007bff', marginTop: '5px' }} onClick={(e) => e.stopPropagation()}>
                           <div style={{fontWeight: 'bold', marginBottom: '10px', color: '#007bff'}}>🔗 관련 링크</div>
-                          <ul style={{listStyle:'none', padding:0, margin:'0 0 15px 0'}}>{fileBookmarks.map((bm, i) => (<li key={i} style={{marginBottom:'8px', display:'flex', alignItems:'center', background:'white', padding:'8px', borderRadius:'4px', border:'1px solid #dee2e6'}}><div style={{flex:1, display:'flex', flexDirection:'column', cursor:'pointer'}} onClick={() => openLink(bm.url)}><span style={{fontWeight:'bold', color:'#0056b3', fontSize:'14px'}}>{bm.title}</span><span style={{fontSize:'11px', color:'#999'}}>{bm.url}</span>{bm.desc && <span style={{fontSize:'12px', color:'#555', marginTop:'2px'}}>└ {bm.desc}</span>}</div><button onClick={() => handleDeleteBookmark(file.path, i)} style={{marginLeft:'10px', border:'none', background:'none', cursor:'pointer', color:'#ff4d4f'}}>✖</button></li>))}{fileBookmarks.length === 0 && <li style={{color:'#999', fontSize:'12px'}}>저장된 링크가 없습니다.</li>}</ul><div style={{display:'flex', flexDirection:'column', gap:'8px', background:'white', padding:'10px', borderRadius:'4px', border:'1px solid #ddd'}}><div style={{display:'flex', gap:'8px'}}><input type="text" placeholder="제목" value={activeFileForBookmark === file.path ? inputTitle : ''} onChange={(e) => { setActiveFileForBookmark(file.path); setInputTitle(e.target.value); }} style={{flex:1, padding:'6px', borderRadius:'4px', border:'1px solid #ccc'}} /><input type="text" placeholder="URL" value={activeFileForBookmark === file.path ? inputUrl : ''} onChange={(e) => { setActiveFileForBookmark(file.path); setInputUrl(e.target.value); }} style={{flex:2, padding:'6px', borderRadius:'4px', border:'1px solid #ccc'}} /></div><div style={{display:'flex', gap:'8px'}}><input type="text" placeholder="설명" value={activeFileForBookmark === file.path ? inputDesc : ''} onChange={(e) => { setActiveFileForBookmark(file.path); setInputDesc(e.target.value); }} style={{flex:1, padding:'6px', borderRadius:'4px', border:'1px solid #ccc'}} /><button onClick={() => handleAddBookmark(file.path)} style={{padding:'6px 20px', background:'#007bff', color:'white', border:'none', borderRadius:'4px', cursor:'pointer', fontWeight:'bold'}}>추가</button></div></div></div>)}
+                          <ul style={{listStyle:'none', padding:0, margin:'0 0 15px 0'}}>{fileBookmarks.map((bm, i) => (<li key={i} style={{marginBottom:'8px', display:'flex', alignItems:'center', background:'white', padding:'8px', borderRadius:'4px', border:'1px solid #dee2e6'}}><div style={{flex:1, display:'flex', flexDirection:'column', cursor:'pointer'}} onClick={() => openLink(bm.url)}><span style={{fontWeight:'bold', color:'#0056b3', fontSize:'14px'}}>{bm.title}</span><span style={{fontSize:'11px', color:'#999'}}>{bm.url}</span>{bm.desc && <div style={{marginTop:'4px', padding:'4px 8px', backgroundColor:'#f1f1f1', borderRadius:'4px', fontSize:'11px', color:'#333', display:'flex', alignItems:'flex-start', width:'fit-content'}}><span style={{marginRight:'4px'}}>📝</span><span>{bm.desc}</span></div>}</div><button onClick={() => handleDeleteBookmark(file.path, i)} style={{marginLeft:'10px', border:'none', background:'none', cursor:'pointer', color:'#ff4d4f'}}>✖</button></li>))}{fileBookmarks.length === 0 && <li style={{color:'#999', fontSize:'12px'}}>저장된 링크가 없습니다.</li>}</ul><div style={{display:'flex', flexDirection:'column', gap:'8px', background:'white', padding:'10px', borderRadius:'4px', border:'1px solid #ddd'}}><div style={{display:'flex', gap:'8px'}}><input type="text" placeholder="제목" value={activeFileForBookmark === file.path ? inputTitle : ''} onChange={(e) => { setActiveFileForBookmark(file.path); setInputTitle(e.target.value); }} style={{flex:1, padding:'6px', borderRadius:'4px', border:'1px solid #ccc'}} /><input type="text" placeholder="URL" value={activeFileForBookmark === file.path ? inputUrl : ''} onChange={(e) => { setActiveFileForBookmark(file.path); setInputUrl(e.target.value); }} style={{flex:2, padding:'6px', borderRadius:'4px', border:'1px solid #ccc'}} /></div><div style={{display:'flex', gap:'8px'}}><input type="text" placeholder="설명" value={activeFileForBookmark === file.path ? inputDesc : ''} onChange={(e) => { setActiveFileForBookmark(file.path); setInputDesc(e.target.value); }} style={{flex:1, padding:'6px', borderRadius:'4px', border:'1px solid #ccc'}} /><button onClick={() => handleAddBookmark(file.path)} style={{padding:'6px 20px', background:'#007bff', color:'white', border:'none', borderRadius:'4px', cursor:'pointer', fontWeight:'bold'}}>추가</button></div></div></div>)}
                     </div>
                   );
                 })}
@@ -636,7 +901,7 @@ function App() {
         )}
       </div>
 
-      {/* 중간 사이드바 (미분류 / 과목별) */}
+      {/* 중간 사이드바 (미분류 / 과목별 / 북마크) */}
       <div style={{ width: '400px', minWidth: '400px', maxWidth: '400px', borderLeft: '1px solid #eee', backgroundColor: '#fafafa', display: 'flex', flexDirection: 'column', flexShrink: 0 }}>
         
         {/* 전체 파일 열기 토글 버튼 */}
@@ -649,11 +914,13 @@ function App() {
         <div style={{ display: 'flex', backgroundColor: 'white', borderBottom: '1px solid #ddd' }}>
           <button onClick={() => setSidebarTab('not_added')} style={tabStyle('not_added')}>미분류</button>
           <button onClick={() => setSidebarTab('added')} style={tabStyle('added')}>과목별</button>
+          <button onClick={() => setSidebarTab('bookmarks')} style={tabStyle('bookmarks')}>⭐ 북마크</button>
         </div>
 
         <div style={{ padding: '15px 20px 5px 20px', fontSize: '14px', fontWeight: 'bold', color: '#333' }}>
           {sidebarTab === 'not_added' && "📂 캘린더 미추가 파일"}
           {sidebarTab === 'added' && "📚 과목별 분류 (캘린더 추가됨)"}
+          {sidebarTab === 'bookmarks' && "⭐ 북마크 모아보기"}
         </div>
 
         <div ref={draggableRef} style={{ flex: 1, overflowY: 'auto', padding: '10px 20px' }}>
@@ -661,9 +928,23 @@ function App() {
         </div>
       </div>
 
-      {/* 우측 서랍: 전체 파일 보관함 */}
+      {/* 🔴 [수정됨] 우측 서랍: 전체 파일 보관함 (Overlay 방식) */}
       {isMyDocsOpen && (
-        <div style={{ width: '350px', minWidth: '350px', maxWidth: '350px', borderLeft: '1px solid #ccc', backgroundColor: '#fff', display: 'flex', flexDirection: 'column', flexShrink: 0, boxShadow:'-2px 0 5px rgba(0,0,0,0.05)', zIndex: 900 }}>
+        <div style={{ 
+            position: 'absolute', // 공중에 띄우기
+            right: 0,
+            top: 0,
+            bottom: 0,
+            width: '350px', 
+            minWidth: '350px', 
+            maxWidth: '350px', 
+            borderLeft: '1px solid #ccc', 
+            backgroundColor: '#fff', 
+            display: 'flex', 
+            flexDirection: 'column', 
+            zIndex: 2000, // 가장 위에 표시
+            boxShadow: '-5px 0 15px rgba(0,0,0,0.1)' // 그림자 효과 강화
+        }}>
             <div style={{ padding: '15px', backgroundColor:'#f8f9fa', borderBottom: '1px solid #eee', fontSize: '15px', fontWeight: 'bold', color: '#333', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
                 <span>🗄️ 내 문서함 (전체)</span>
                 <button onClick={() => setIsMyDocsOpen(false)} style={{border:'none', background:'none', cursor:'pointer', fontSize:'16px'}}>✖</button>
