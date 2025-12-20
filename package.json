@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "An Electron application with React",
   "main": "./out/main/index.js",
-  "author": "example.com",
+  "author": "Minseo",
   "homepage": "https://electron-vite.org",
   "scripts": {
     "format": "prettier --write .",
@@ -44,5 +44,30 @@
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "vite": "^7.1.6"
+  },
+  "build": {
+    "appId": "com.minseo.calendar",
+    "productName": "My Smart Calendar",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "out/**/*",
+      "resources/**/*"
+    ],
+    "win": {
+      "target": "nsis",
+      "icon": "resources/icon.ico"
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "resources/icon.icns",
+      "identity": null
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    }
   }
 }

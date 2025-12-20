@@ -65,6 +65,7 @@ function App() {
   const [isMyDocsOpen, setIsMyDocsOpen] = useState(false);
   const [bookmarkSummaries, setBookmarkSummaries] = useState({});
 
+  // 모달 관련 상태
   const [isDateChangeModalOpen, setIsDateChangeModalOpen] = useState(false);
   const [targetFileForDateChange, setTargetFileForDateChange] = useState(null); 
   const [newDateInput, setNewDateInput] = useState('');
@@ -73,6 +74,7 @@ function App() {
   const myDocsDraggableRef = useRef(null); 
   const calendarRef = useRef(null);
 
+  // 1. 폴더 열릴 때 요약 자동 로드
   useEffect(() => {
     if (viewMode === 'folder' && openedFolder) {
       openedFolder.files.forEach(async (file) => {
@@ -87,9 +89,11 @@ function App() {
     }
   }, [viewMode, openedFolder]);
 
+  // 2. 이벤트 변경 시 폴더 뷰 동기화
   useEffect(() => {
     if (viewMode === 'folder' && openedFolder && openedFolder.date) {
         const currentEvent = events.find(e => e.title === openedFolder.title && e.date === openedFolder.date);
+        
         if (currentEvent) {
             setOpenedFolder(prev => ({ ...prev, files: currentEvent.extendedProps.files }));
         } else {
@@ -99,20 +103,40 @@ function App() {
     }
   }, [events]);
 
+  // 🔴 [신규] 이벤트(캘린더 일정)가 변경될 때마다 로컬 스토리지에 저장
   useEffect(() => {
-    console.log("🚀 앱 시작");
+    if (events.length > 0) {
+        localStorage.setItem('calendarEvents', JSON.stringify(events));
+    }
+  }, [events]);
+
+  // 3. 초기 데이터 로드 및 리스너 등록
+  useEffect(() => {
+    console.log("🚀 앱 시작 - 데이터 불러오기");
+    
+    // 저장된 데이터 불러오기
     const savedMemos = localStorage.getItem('fileMemos');
     if (savedMemos) setMemos(JSON.parse(savedMemos));
+    
     const savedSummaries = localStorage.getItem('fileSummaries');
     if (savedSummaries) setSummaries(JSON.parse(savedSummaries));
+    
     const savedBookmarks = localStorage.getItem('fileBookmarks');
     if (savedBookmarks) setBookmarks(JSON.parse(savedBookmarks));
+    
     const savedProgress = localStorage.getItem('fileProgress');
     if (savedProgress) setProgress(JSON.parse(savedProgress));
+
+    // 🔴 [신규] 저장된 캘린더 이벤트 불러오기
+    const savedEvents = localStorage.getItem('calendarEvents');
+    if (savedEvents) {
+        setEvents(JSON.parse(savedEvents));
+    }
 
     setSummaryOpenState({});
     setBookmarkOpenState({});
 
+    // 파일 감시 리스너
     const removeListener = window.api.onFileAdded((filePath) => {
       const parts = filePath.split(/[/\\]/);
       const fileName = parts.pop();
@@ -120,6 +144,17 @@ function App() {
       const folderName = (parentFolder === 'my-docs') ? '기타 파일' : parentFolder;
 
       if (fileName.startsWith('.') || fileName.startsWith('~$')) return;
+
+      // 🔴 [중요] 이미 캘린더(events)에 등록된 파일인지 확인
+      // 로컬스토리지에서 최신 데이터를 가져와서 비교해야 안전함
+      const currentSavedEvents = JSON.parse(localStorage.getItem('calendarEvents') || '[]');
+      
+      const isAlreadyInCalendar = currentSavedEvents.some(evt => 
+        evt.extendedProps.files && evt.extendedProps.files.some(f => f.path === filePath)
+      );
+
+      // 캘린더에 이미 있으면 '미분류' 목록에 추가하지 않음
+      if (isAlreadyInCalendar) return;
 
       setFiles(prev => {
         if (prev.some(f => f.path === filePath)) return prev;
@@ -160,7 +195,7 @@ function App() {
       }
 
     return () => {};
-  }, [viewMode, sidebarTab, files, events, currentMyDocsFolder, currentAddedFolder, currentNotAddedFolder, currentBookmarkFolder, addedSortOrder, addedViewMode, isMyDocsOpen]);
+  }, []); // 의존성 배열 비움 (최초 1회 실행)
 
   const handleMemoChange = (filePath, text) => {
     const newMemos = { ...memos, [filePath]: text };
@@ -177,9 +212,11 @@ function App() {
   const handleAddBookmark = (filePath) => {
     if (!inputUrl) return alert("URL을 입력해주세요!");
     if (!inputTitle) return alert("제목을 입력해주세요!");
+    
     const newBookmark = { title: inputTitle, url: inputUrl, desc: inputDesc };
     const currentList = bookmarks[filePath] || [];
     const newList = [...currentList, newBookmark];
+
     const newBookmarksMap = { ...bookmarks, [filePath]: newList };
     setBookmarks(newBookmarksMap);
     localStorage.setItem('fileBookmarks', JSON.stringify(newBookmarksMap));
@@ -227,7 +264,9 @@ function App() {
     const safeFolder = folder || info.draggedEl.dataset.folder;
     const safeFileName = fileName || info.draggedEl.dataset.filename;
     const dropDate = info.event.startStr;
+
     if (!safePath) return;
+
     setTempDropInfo({ path: safePath, folder: safeFolder, fileName: safeFileName, date: dropDate });
     setModalInput(''); 
     setIsModalOpen(true);
@@ -239,13 +278,17 @@ function App() {
         setIsModalOpen(false);
         return;
     }
+
     const targetFolderName = modalInput.trim();
     const { path, fileName, folder, date } = tempDropInfo;
     const newFile = { path, fileName, folder }; 
+
     setEvents(prevEvents => {
       const existingIndex = prevEvents.findIndex(evt => evt.date === date && evt.title === targetFolderName);
+      let newEvents;
+      
       if (existingIndex !== -1) {
-        const newEvents = [...prevEvents];
+        newEvents = [...prevEvents];
         const existingEvent = newEvents[existingIndex];
         const existingFiles = existingEvent.extendedProps.files || [];
         if (!existingFiles.some(f => f.path === path)) {
@@ -254,9 +297,8 @@ function App() {
             extendedProps: { ...existingEvent.extendedProps, files: [...existingFiles, newFile] }
           };
         }
-        return newEvents;
       } else {
-        return [...prevEvents, {
+        newEvents = [...prevEvents, {
           id: Date.now().toString() + Math.random(),
           title: targetFolderName,
           date: date,
@@ -265,7 +307,11 @@ function App() {
           borderColor: 'transparent'
         }];
       }
+      // 저장
+      localStorage.setItem('calendarEvents', JSON.stringify(newEvents));
+      return newEvents;
     });
+
     setFiles(prev => prev.filter(f => f.path !== path));
     setIsModalOpen(false);
     setTempDropInfo(null);
@@ -289,10 +335,12 @@ function App() {
     setActiveFileForBookmark(filePath); 
   };
 
+  // 🗑️ [기능] 캘린더 추가된 파일 삭제 (Not Added로 복귀)
   const handleDeleteAddedFile = (file, eventDate, folderName) => {
     if(!confirm(`'${file.title || file.fileName}' 파일을 캘린더에서 제거하시겠습니까?`)) return;
+
     setEvents(prevEvents => {
-        return prevEvents.map(evt => {
+        const newEvents = prevEvents.map(evt => {
             if (evt.date === eventDate && evt.title === folderName) {
                 const newFiles = evt.extendedProps.files.filter(f => f.path !== file.path);
                 if (newFiles.length === 0) return null;
@@ -300,13 +348,21 @@ function App() {
             }
             return evt;
         }).filter(Boolean); 
+        
+        // 저장
+        localStorage.setItem('calendarEvents', JSON.stringify(newEvents));
+        return newEvents;
     });
+
+    // 🔴 경로 기반으로 원래 파일명과 폴더명 복구 (정보 누락 방지)
     setFiles(prev => {
         if(prev.some(f => f.path === file.path)) return prev;
+        
         const parts = file.path.split(/[/\\]/);
         const originalFileName = parts.pop();
         const parentFolder = parts.pop();
         const originalFolder = (parentFolder === 'my-docs') ? '기타 파일' : parentFolder;
+
         return [...prev, { 
             id: file.path,
             path: file.path, 
@@ -317,6 +373,7 @@ function App() {
     });
   };
 
+  // 📅 [기능] 날짜 변경
   const openDateChangeModal = (file, eventDate, folderName) => {
     setTargetFileForDateChange({ file, oldDate: eventDate, folderName });
     setNewDateInput(eventDate); 
@@ -326,10 +383,12 @@ function App() {
   const confirmDateChange = () => {
     if (!newDateInput) return alert("날짜를 선택해주세요.");
     const { file, oldDate, folderName } = targetFileForDateChange;
+
     if (newDateInput === oldDate) {
         setIsDateChangeModalOpen(false);
         return;
     }
+
     setEvents(prevEvents => {
         let newEvents = prevEvents.map(evt => {
             if (evt.date === oldDate && evt.title === folderName) {
@@ -339,6 +398,7 @@ function App() {
             }
             return evt;
         }).filter(Boolean);
+
         const targetIndex = newEvents.findIndex(evt => evt.date === newDateInput && evt.title === folderName);
         if (targetIndex !== -1) {
             const targetEvt = newEvents[targetIndex];
@@ -358,11 +418,16 @@ function App() {
                 borderColor: 'transparent'
             });
         }
+        
+        // 저장
+        localStorage.setItem('calendarEvents', JSON.stringify(newEvents));
         return newEvents;
     });
+
     setIsDateChangeModalOpen(false);
     setTargetFileForDateChange(null);
   };
+
 
   const getAllFiles = () => {
     const allFiles = [...files]; 
@@ -421,6 +486,7 @@ function App() {
 
   const renderMyDocsTab = () => {
     const allFiles = getAllFiles();
+
     if (currentMyDocsFolder === null) {
         const folderNames = [...new Set(allFiles.map(f => f.folder))].sort();
         return (
@@ -486,13 +552,15 @@ function App() {
   };
 
   const renderSidebarList = () => {
-    // A. 미분류 (not_added)
+    
+    // A. 미분류 (not_added) - 삭제 버튼 없음 (복구됨)
     if (sidebarTab === 'not_added') {
       if (currentNotAddedFolder === null) {
           if (!Array.isArray(sidebarData) || sidebarData.length === 0) {
             return <p style={{color:'#999', fontSize:'12px', textAlign:'center', marginTop:'30px'}}>파일이 없습니다.</p>;
           }
           const folderNames = [...new Set(sidebarData.map(f => f.folder))].sort();
+          
           return (
             <div>
                  <div style={{fontSize:'12px', color:'#999', marginBottom:'10px', textAlign:'center'}}>폴더를 선택하여 파일을 확인하세요.</div>
@@ -604,6 +672,7 @@ function App() {
                                             <div style={{flexShrink:0, marginRight:'8px'}}><FileIcon /></div>
                                             <span style={{ color: '#333', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{file.title || file.fileName}</span>
                                         </div>
+                                        {/* 사이드바 과목별 탭에도 삭제/수정 버튼 유지 */}
                                         <div style={{display:'flex', gap:'5px', marginLeft:'5px'}}>
                                             <button onClick={(e) => { e.stopPropagation(); openDateChangeModal(file, file.date, currentAddedFolder); }} title="날짜 변경" style={{border:'none', background:'none', cursor:'pointer', fontSize:'14px'}}>✏️</button>
                                             <button onClick={(e) => { e.stopPropagation(); handleDeleteAddedFile(file, file.date, currentAddedFolder); }} title="목록에서 제거" style={{border:'none', background:'none', cursor:'pointer', fontSize:'14px'}}>🗑️</button>
@@ -877,7 +946,6 @@ function App() {
                         </div>
                       </div>
                       
-                      {/* ... (진행률, 요약/북마크 버튼) ... */}
                       <div style={{ paddingLeft: '38px', marginBottom: '10px', display:'flex', alignItems:'center' }} onClick={(e) => e.stopPropagation()}>
                         <span style={{fontSize:'12px', color:'#666', marginRight:'10px', width:'40px'}}>진행률</span>
                         <input type="range" min="0" max="100" value={currentProgress} onChange={(e) => handleProgressChange(file.path, e.target.value)} style={{ flex: 1, cursor: 'pointer', height: '6px', borderRadius: '3px', appearance: 'none', background: `linear-gradient(to right, #007bff ${currentProgress}%, #e9ecef ${currentProgress}%)` }} />
